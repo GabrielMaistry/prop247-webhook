@@ -13,11 +13,10 @@ const SUPABASE_URL = 'https://byzuikkzzehjxpgnsddz.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5enVpa2t6emVoanhwZ25zZGR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI2NjI3NzAsImV4cCI6MjEwODIzODc3MH0.5Ysvj3DzuR7QL9FFcwIuC__Eq5UD2QhPE5ZQBI1v7uY';
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// WhatsApp API Setup
-// ⚠️ REPLACE THIS WITH YOUR PERMANENT SYSTEM USER TOKEN
+// WhatsApp API Setup (PERMANENT TOKEN)
 const WHATSAPP_TOKEN = 'EAActpmZBw03kBS5Ktkb7TQd5n2DLHWEv3Oc8TSKN7lQZCUFZA3BLF4QZCiQul2BcIWcU0cQ0Wl2R2um9V7oJ5smGFZANZA6leZCmbZBWb71KeZBd4B7uHlXnIGYqq0I5HI9nSrRADpenSe5n0rIuTOz8gzcR30uZC4mwYyzvb4ZBjuO986nAnBYo0KvEiZCx9oXOdgZDZD'; 
 const PHONE_NUMBER_ID = '1472307879292652';
-const AGENT_PHONE_NUMBER = '27606545641'; // ⚠️ Put YOUR number here for testing
+const AGENT_PHONE_NUMBER = '27637662817'; // ⚠️ YOUR agent number
 
 // API route to get properties for the website
 app.get('/api/properties', async (req, res) => {
@@ -122,54 +121,50 @@ app.post('/webhook', async (req, res) => {
             const leadName = contact.profile.name;
 
             // ==========================================
-            // HANDLE BUTTON REPLIES (Pre-qualifying)
+            // 1. HANDLE BUTTON REPLIES
             // ==========================================
             if (message.type === 'button') {
                 const buttonPayload = message.button.payload; 
                 console.log(`🔘 Buyer clicked: ${buttonPayload}`);
                 
-                // Update the lead in the database with their answer
                 const answer = buttonPayload === 'financing_cash' ? 'Cash Buyer' : 'Needs Financing';
                 await supabase.from('leads').update({ message: `Pre-qualified: ${answer}` }).eq('phone', fromNumber);
                 
                 try {
                     await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
                         messaging_product: "whatsapp",
-                        to: fromNumber,
+                        to: fromNumber, // Goes to Customer
                         text: { body: `Thanks for letting us know! An agent will be in touch shortly to assist you further.` }
                     }, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } });
                     console.log("✅ Confirmation sent to buyer!");
                 } catch (err) {
                     console.error("❌ Failed to send confirmation:", err.response?.data || err.message);
                 }
-                
-                return res.sendStatus(200); // Stop processing further
+                return res.sendStatus(200);
             }
 
             // ==========================================
-            // HANDLE STANDARD TEXT MESSAGES
+            // 2. HANDLE STANDARD TEXT MESSAGES
             // ==========================================
             const messageText = message.text ? message.text.body : "[Media/Other]";
             console.log(`📥 Received lead from ${leadName} (${fromNumber})`);
 
-            // Extract Property ID if it exists in the message
             let propertyId = null;
             const refMatch = messageText.match(/Ref:\s*ID-(\d+)/i);
             if (refMatch) propertyId = refMatch[1];
 
-            // 1. SAVE TO SUPABASE
+            // Save to DB
             const { error } = await supabase.from('leads').insert([
                 { name: leadName, phone: fromNumber, message: messageText, property_id: propertyId }
             ]);
-            
             if (error) console.error("❌ Supabase Error:", error);
             else console.log("✅ Lead saved to DB!");
 
-            // 2. AUTO-REPLY WITH INTERACTIVE BUTTONS (Pre-qualifying)
+            // Send Pre-qualifying buttons to CUSTOMER
             try {
                 await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
                     messaging_product: "whatsapp",
-                    to: fromNumber,
+                    to: fromNumber, // Goes to Customer
                     type: "interactive",
                     interactive: {
                         type: "button",
@@ -181,25 +176,21 @@ app.post('/webhook', async (req, res) => {
                             ]
                         }
                     }
-                }, {
-                    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
-                });
+                }, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } });
                 console.log("✅ Pre-qualifying buttons sent to buyer!");
             } catch (err) {
                 console.error("❌ Failed to send buttons:", err.response?.data || err.message);
             }
 
-            // 3. NOTIFY THE AGENT
+            // Send New Lead Alert to AGENT
             try {
                 const agentLink = `https://wa.me/${fromNumber}?text=Hi%20${leadName},%20I%20am%20responding%20to%20your%20Prop247%20enquiry.`;
                 
                 await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
                     messaging_product: "whatsapp",
-                    to: AGENT_PHONE_NUMBER,
+                    to: AGENT_PHONE_NUMBER, // Goes to Agent
                     text: { body: `🚨 *NEW LEAD*\n\n👤 Name: ${leadName}\n📱 Phone: ${fromNumber}\n💬 Message: ${messageText}\n\n👇 Click here to reply:\n${agentLink}` }
-                }, {
-                    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
-                });
+                }, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } });
                 console.log("✅ Agent notified!");
             } catch (err) {
                 console.error("❌ Failed to notify agent:", err.response?.data || err.message);
