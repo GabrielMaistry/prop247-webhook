@@ -1,18 +1,23 @@
 const express = require('express');
+const axios = require('axios'); // We need this to send messages to Meta
 const { createClient } = require('@supabase/supabase-js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware to parse incoming JSON payloads
 app.use(express.json());
 
-// This MUST match the Verify Token in your Meta Developer Dashboard
 const VERIFY_TOKEN = "prop247_secret_123";
 
-// Setup Supabase Connection
+// Supabase Setup
 const SUPABASE_URL = 'https://byzuikkzzehjxpgnsddz.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5enVpa2t6emVoanhwZ25zZGR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI2NjI3NzAsImV4cCI6MjEwODIzODc3MH0.5Ysvj3DzuR7QL9FFcwIuC__Eq5UD2QhPE5ZQBI1v7uY'; // Make sure this is the full key
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5enVpa2t6emVoanhwZ25zZGR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI2NjI3NzAsImV4cCI6MjEwODIzODc3MH0.5Ysvj3DzuR7QL9FFcwIuC__Eq5UD2QhPE5ZQBI1v7uY';
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// WhatsApp API Setup
+// ⚠️ REPLACE THESE WITH YOUR ACTUAL IDs
+const WHATSAPP_TOKEN = 'EAActpmZBw03kBSyHwZAX3sikBYrCItQbHYGhJ4t7AEX7yBHN7qPeFOSZCaPO9d2nne3uzn089LL86cubokBAFDJOgA7s2ILikGJM3FGYAQ5veBPW6fJJAPNyZC2nP6IupqTjhlnASvcUZCL5mBbUy70etEvM43vy0Y5mIZCxmAZCxXduOuqTwZBtKbsAG0mtiD9J7Nj3NsuV8HNbRMyN3ccoSn6hPdnkANZAejDcagvB2GPbRAJNgZC8yH1kW7OHL5CnQbV6N3zOfZB2dmRInNDVAZDZD'; 
+const PHONE_NUMBER_ID = '1472307879292652';
+const AGENT_PHONE_NUMBER = '27821234567'; // ⚠️ Put the Agent's real number here (country code, no +)
 
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
@@ -21,7 +26,6 @@ app.get('/webhook', (req, res) => {
 
     if (mode && token) {
         if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-            console.log('WEBHOOK_VERIFIED');
             res.status(200).send(challenge);
         } else {
             res.sendStatus(403);
@@ -35,45 +39,56 @@ app.post('/webhook', async (req, res) => {
     const body = req.body;
 
     if (body.object === 'whatsapp_business_account') {
-        if (
-            body.entry &&
-            body.entry[0].changes &&
-            body.entry[0].changes[0].value.messages &&
-            body.entry[0].changes[0].value.messages[0]
-        ) {
+        if (body.entry && body.entry[0].changes && body.entry[0].changes[0].value.messages && body.entry[0].changes[0].value.messages[0]) {
+            
             const message = body.entry[0].changes[0].value.messages[0];
             const contact = body.entry[0].changes[0].value.contacts[0];
-
             const fromNumber = message.from;
             const leadName = contact.profile.name;
-            const messageText = message.text ? message.text.body : "[Not a text message]";
+            const messageText = message.text ? message.text.body : "[Media/Other]";
 
-            console.log("====================================");
-            console.log("📥 NEW LEAD RECEIVED!");
-            console.log(`👤 Name: ${leadName}`);
-            console.log(`📱 Phone: ${fromNumber}`);
-            console.log(`💬 Message: ${messageText}`);
-            console.log("====================================");
+            console.log(`📥 Received lead from ${leadName} (${fromNumber})`);
 
-            // 💾 SAVE TO SUPABASE
-            const { data, error } = await supabase
-                .from('leads')
-                .insert([
-                    { name: leadName, phone: fromNumber, message: messageText }
-                ]);
+            // 1. SAVE TO SUPABASE
+            const { error } = await supabase.from('leads').insert([{ name: leadName, phone: fromNumber, message: messageText }]);
+            if (error) console.error("❌ Supabase Error:", error);
+            else console.log("✅ Lead saved to DB!");
 
-            if (error) {
-                console.error("❌ Error saving to Supabase:", error);
-            } else {
-                console.log("✅ Lead successfully saved to database!");
+            // 2. AUTO-REPLY TO THE BUYER (Like Page 6 of the PDF)
+            try {
+                await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
+                    messaging_product: "whatsapp",
+                    to: fromNumber,
+                    text: { body: `Hi ${leadName}, this is Prop247. Thanks for your enquiry. One of our agents will be in contact with you shortly on WhatsApp.` }
+                }, {
+                    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
+                });
+                console.log("✅ Auto-reply sent to buyer!");
+            } catch (err) {
+                console.error("❌ Failed to send auto-reply:", err.response?.data || err.message);
+            }
+
+            // 3. NOTIFY THE AGENT (Like Page 7 of the PDF)
+            try {
+                // We use a wa.me link so the agent can just click it to reply
+                const agentLink = `https://wa.me/${fromNumber}?text=Hi%20${leadName},%20I%20am%20responding%20to%20your%20Prop247%20enquiry.`;
+                
+                await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
+                    messaging_product: "whatsapp",
+                    to: AGENT_PHONE_NUMBER,
+                    text: { body: `🚨 *NEW LEAD*\n\n👤 Name: ${leadName}\n📱 Phone: ${fromNumber}\n💬 Message: ${messageText}\n\n👇 Click here to reply:\n${agentLink}` }
+                }, {
+                    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
+                });
+                console.log("✅ Agent notified!");
+            } catch (err) {
+                console.error("❌ Failed to notify agent:", err.response?.data || err.message);
             }
         }
     }
-
-    // Always respond with 200 OK to Meta
     res.sendStatus(200);
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Webhook server listening on port ${PORT}`);
+    console.log(`Webhook listening on port ${PORT}`);
 });
