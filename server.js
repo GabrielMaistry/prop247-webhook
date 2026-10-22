@@ -11,7 +11,7 @@ const VERIFY_TOKEN = "prop247_secret_123";
 
 // Setup Supabase Connection
 const SUPABASE_URL = 'https://byzuikkzzehjxpgnsddz.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_Unp2ba5pU-m1yJHR02IkA_XrDjIygW'; // Make sure this is the full key
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5enVpa2t6emVoanhwZ25zZGR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI2NjI3NzAsImV4cCI6MjEwODIzODc3MH0.5Ysvj3DzuR7QL9FFcwIuC__Eq5UD2QhPE5ZQBI1v7uY'; // Make sure this is the full key
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 app.get('/webhook', (req, res) => {
