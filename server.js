@@ -31,7 +31,7 @@ app.get('/dashboard', async (req, res) => {
 
     let tableRows = leads.map(lead => {
         let statusColor = '#ccc';
-        if (lead.requires_human) statusColor = '#f44336'; // Red for human needed
+        if (lead.requires_human) statusColor = '#f44336'; 
         else if (lead.status === 'New') statusColor = '#ff9800'; 
         else if (lead.status === 'Contacted') statusColor = '#2196f3'; 
         else if (lead.status === 'Closed') statusColor = '#4caf50'; 
@@ -43,7 +43,7 @@ app.get('/dashboard', async (req, res) => {
             <td>${new Date(lead.created_at).toLocaleString()}</td>
             <td><strong>${lead.name || 'Unknown'}</strong></td>
             <td><a href="https://wa.me/${lead.phone}" target="_blank">${lead.phone}</a></td>
-            <td>${lead.message}</td>
+            <td>${lead.message || '-'}</td>
             <td>${lead.property_id ? `ID-${lead.property_id}` : 'N/A'}</td>
             <td>${lead.prequalified || '-'}</td>
             <td>${lead.intent || '-'}</td>
@@ -99,16 +99,10 @@ app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
-
     if (mode && token) {
-        if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-            res.status(200).send(challenge);
-        } else {
-            res.sendStatus(403);
-        }
-    } else {
-        res.sendStatus(400);
-    }
+        if (mode === 'subscribe' && token === VERIFY_TOKEN) res.status(200).send(challenge);
+        else res.sendStatus(403);
+    } else res.sendStatus(400);
 });
 
 // Helpers
@@ -123,14 +117,8 @@ async function sendText(to, text) {
 async function sendButtons(to, text, buttons) {
     try {
         await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
-            messaging_product: "whatsapp",
-            to: to,
-            type: "interactive",
-            interactive: {
-                type: "button",
-                body: { text: text },
-                action: { buttons: buttons }
-            }
+            messaging_product: "whatsapp", to: to, type: "interactive",
+            interactive: { type: "button", body: { text: text }, action: { buttons: buttons } }
         }, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } });
     } catch (err) { console.error("❌ Button Error:", err.response?.data || err.message); }
 }
@@ -149,112 +137,102 @@ app.post('/webhook', async (req, res) => {
             const fromNumber = message.from;
             const leadName = contact.profile.name;
             
-            // Check if they are asking for a human
+            // 1. CHECK FOR HUMAN REQUEST (Catches any message containing the word)
             const textContent = message.text ? message.text.body.toLowerCase() : "";
-            const isAskingForHuman = textContent.includes("agent") || textContent.includes("human") || textContent.includes("help") || textContent.includes("speak");
+            const isAskingForHuman = textContent.includes("agent") || textContent.includes("human") || textContent.includes("help");
 
-            const { data: existingLead } = await supabase
-                .from('leads')
-                .select('*')
-                .eq('phone', fromNumber)
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .single();
-
-            let currentState = existingLead ? existingLead.bot_state : 'START';
-
-            // --- ESCALATE TO HUMAN ---
-            if (isAskingForHuman && (!existingLead || !existingLead.requires_human)) {
-                await sendText(fromNumber, `No problem at all! 🙋‍♂️ I am connecting you with one of our human agents right now. They will jump in shortly.`);
+            if (isAskingForHuman) {
+                const { data: existingLead } = await supabase.from('leads').select('*').eq('phone', fromNumber).order('created_at', { ascending: false }).limit(1).single();
                 
+                // Update DB to pause bot
                 if (existingLead) {
                     await supabase.from('leads').update({ requires_human: true, bot_state: 'HUMAN' }).eq('id', existingLead.id);
                 } else {
                     await supabase.from('leads').insert([{ name: leadName, phone: fromNumber, message: textContent, requires_human: true, bot_state: 'HUMAN' }]);
                 }
+
+                await sendText(fromNumber, `No problem at all! 🙋‍♂️ I have paused the assistant and alerted our human agent. They will jump into this chat shortly.`);
                 
-                // Alert Agent immediately
+                // Alert Agent
                 const agentLink = `https://wa.me/${fromNumber}?text=Hi%20${leadName},%20I%20am%20taking%20over%20your%20Prop247%20enquiry.`;
                 await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
-                    messaging_product: "whatsapp",
-                    to: AGENT_PHONE_NUMBER,
+                    messaging_product: "whatsapp", to: AGENT_PHONE_NUMBER,
                     text: { body: `🚨 *URGENT: HUMAN REQUESTED* 🚨\n\n👤 Name: ${leadName}\n📱 Phone: ${fromNumber}\n\n👇 Click here to open the chat and take over:\n${agentLink}` }
                 }, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } });
                 
                 return res.sendStatus(200);
             }
 
-            // If they already have a human assigned, stop the bot from replying
-            if (existingLead && existingLead.requires_human) {
-                console.log(`🤐 Bot paused for ${fromNumber} (Human is handling)`);
+            // Check if human is already handling, if so, ignore
+            const { data: checkLead } = await supabase.from('leads').select('requires_human').eq('phone', fromNumber).order('created_at', { ascending: false }).limit(1).single();
+            if (checkLead && checkLead.requires_human) {
                 return res.sendStatus(200); 
             }
 
-            // --- NEW LEAD (First message) ---
+            // --- FLOW ---
+            const { data: existingLead } = await supabase.from('leads').select('*').eq('phone', fromNumber).order('created_at', { ascending: false }).limit(1).single();
+            let currentState = existingLead ? existingLead.bot_state : 'START';
+
+            // START
             if (!existingLead || currentState === 'DONE') {
-                const messageText = message.text ? message.text.body : "[Media]";
                 let propertyId = null;
-                const refMatch = messageText.match(/Ref:\s*ID-(\d+)/i);
-                if (refMatch) propertyId = refMatch[1];
+                if (message.text) {
+                    const refMatch = message.text.body.match(/Ref:\s*ID-(\d+)/i);
+                    if (refMatch) propertyId = refMatch[1];
+                }
 
                 await supabase.from('leads').insert([{ 
-                    name: leadName, phone: fromNumber, message: messageText, 
-                    property_id: propertyId, bot_state: 'ASK_FINANCING' 
+                    name: leadName, phone: fromNumber, message: textContent, 
+                    property_id: propertyId, bot_state: 'ASK_INTENT' 
                 }]);
 
                 await sendButtons(fromNumber, 
-                    `Hey ${leadName}! 👋 Welcome to Prop247.\n\nI'm your virtual assistant 🤖. To connect you with the *perfect* agent and property, I just need to ask 3 super quick questions.\n\n*Question 1:* Are you paying Cash or do you need Financing?`, 
-                    [{ type: "reply", reply: { id: "q1_cash", title: "💵 Cash" } }, { type: "reply", reply: { id: "q1_finance", title: "🏦 Financing" } }]
+                    `Hey ${leadName}! 👋 Welcome to Prop247.\n\nI'm your virtual assistant. I'd love to help you find your dream property (or sell yours!). \n\nFirst things first: Are you looking to **Buy** or **Sell**?`, 
+                    [{ type: "reply", reply: { id: "q1_buy", title: "🏠 Buy" } }, { type: "reply", reply: { id: "q1_sell", title: "🏷️ Sell" } }]
                 );
                 return res.sendStatus(200);
             }
 
-            // --- STEP 2: FINANCING ANSWERED ---
-            if (message.type === 'button' && currentState === 'ASK_FINANCING') {
-                const answer = message.button.payload === 'q1_cash' ? 'Cash' : 'Financing';
-                await supabase.from('leads').update({ prequalified: answer, bot_state: 'ASK_INTENT' }).eq('id', existingLead.id);
+            // ASK AREA (Text input)
+            if (message.type === 'button' && currentState === 'ASK_INTENT') {
+                const intent = message.button.payload === 'q1_buy' ? 'Buying' : 'Selling';
+                await supabase.from('leads').update({ intent: intent, bot_state: 'ASK_AREA' }).eq('id', existingLead.id);
+
+                await sendText(fromNumber, 
+                    `Awesome! ${intent} it is. ✅\n\nWhich area, suburb, or city are you looking in? (e.g., Umhlanga, Ballito, Durban North)`
+                );
+                return res.sendStatus(200);
+            }
+
+            // ASK FINANCING (Buttons)
+            if (message.type === 'text' && currentState === 'ASK_AREA') {
+                const area = message.text.body;
+                await supabase.from('leads').update({ message: `Area looking in: ${area}`, bot_state: 'ASK_FINANCING' }).eq('id', existingLead.id);
 
                 await sendButtons(fromNumber, 
-                    `Awesome, noted! ✅\n\n*Question 2:* Are you looking to Buy a property, or do you want to Sell your property?`, 
-                    [{ type: "reply", reply: { id: "q2_buy", title: "🏠 Buy" } }, { type: "reply", reply: { id: "q2_sell", title: "🏷️ Sell" } }]
+                    `Got it! The ${area} area is beautiful. 📍\n\nJust one last question: How are you planning to fund this?`, 
+                    [{ type: "reply", reply: { id: "q3_cash", title: "💵 Cash" } }, { type: "reply", reply: { id: "q3_finance", title: "🏦 Financing" } }]
                 );
                 return res.sendStatus(200);
             }
 
-            // --- STEP 3: INTENT ANSWERED ---
-            if (message.type === 'button' && currentState === 'ASK_INTENT') {
-                const answer = message.button.payload === 'q2_buy' ? 'Buying' : 'Selling';
-                await supabase.from('leads').update({ intent: answer, bot_state: 'ASK_EMAIL' }).eq('id', existingLead.id);
+            // FINISH
+            if (message.type === 'button' && currentState === 'ASK_FINANCING') {
+                const financing = message.button.payload === 'q3_cash' ? 'Cash' : 'Financing';
+                await supabase.from('leads').update({ prequalified: financing, bot_state: 'DONE' }).eq('id', existingLead.id);
 
                 await sendText(fromNumber, 
-                    `Perfect! ✅\n\n*Question 3 (Last one, I promise!):* Please reply with your email address so our agent can send you the property brochures and details. 📧`
-                );
-                return res.sendStatus(200);
-            }
-
-            // --- STEP 4: EMAIL RECEIVED ---
-            if (message.type === 'text' && currentState === 'ASK_EMAIL') {
-                const email = message.text.body;
-                await supabase.from('leads').update({ email: email, bot_state: 'DONE' }).eq('id', existingLead.id);
-
-                await sendText(fromNumber, 
-                    `Thank you so much! 🎉 We have all your details. One of our top agents will be in touch with you on WhatsApp shortly.\n\n💡 *(Tip: If you ever want to speak to a human immediately, just type the word "Agent" in this chat!)*`
+                    `Perfect! 🎉 I have all the details I need.\n\nOne of our top agents will be in touch with you on WhatsApp shortly to chat about the best options in ${existingLead.message.replace('Area looking in: ', '')}.\n\n*(Remember, if you ever want to speak to a human immediately, just type "Agent")*`
                 );
 
-                // Notify Agent with ALL the info
+                // Notify Agent
                 const agentLink = `https://wa.me/${fromNumber}?text=Hi%20${leadName},%20I%20am%20responding%20to%20your%20Prop247%20enquiry.`;
                 await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
-                    messaging_product: "whatsapp",
-                    to: AGENT_PHONE_NUMBER,
-                    text: { body: `🚨 *HOT NEW LEAD* 🚨\n\n👤 Name: ${leadName}\n📱 Phone: ${fromNumber}\n💰 Financing: ${existingLead.prequalified}\n🎯 Intent: ${existingLead.intent}\n📧 Email: ${email}\n🏠 Property Ref: ${existingLead.property_id ? `ID-${existingLead.property_id}` : 'N/A'}\n\n👇 Click here to chat with the buyer:\n${agentLink}` }
+                    messaging_product: "whatsapp", to: AGENT_PHONE_NUMBER,
+                    text: { body: `🚨 *NEW HOT LEAD* 🚨\n\n👤 Name: ${leadName}\n📱 Phone: ${fromNumber}\n🎯 Intent: ${existingLead.intent}\n📍 Area: ${area}\n💰 Financing: ${financing}\n\n👇 Click here to chat with the buyer:\n${agentLink}` }
                 }, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } });
                 
                 return res.sendStatus(200);
-            }
-
-            // Fallback
-            if (currentState === 'ASK_FINANCING' || currentState === 'ASK_INTENT') {
-                await sendText(fromNumber, `Oops! Please tap one of the buttons above to answer the question. 😊 (Or type "Agent" if you need help).`);
             }
         }
     }
