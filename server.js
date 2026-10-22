@@ -16,7 +16,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 // WhatsApp API Setup
 const WHATSAPP_TOKEN = 'EAActpmZBw03kBS5Ktkb7TQd5n2DLHWEv3Oc8TSKN7lQZCUFZA3BLF4QZCiQul2BcIWcU0cQ0Wl2R2um9V7oJ5smGFZANZA6leZCmbZBWb71KeZBd4B7uHlXnIGYqq0I5HI9nSrRADpenSe5n0rIuTOz8gzcR30uZC4mwYyzvb4ZBjuO986nAnBYo0KvEiZCx9oXOdgZDZD'; 
 const PHONE_NUMBER_ID = '1472307879292652';
-const AGENT_PHONE_NUMBER = '27821234567'; // ⚠️ Put YOUR number here for testing
+const AGENT_PHONE_NUMBER = '27637662817'; // ⚠️ Put YOUR number here for testing
 
 // API route to get properties for the website
 app.get('/api/properties', async (req, res) => {
