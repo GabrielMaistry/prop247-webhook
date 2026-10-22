@@ -2,6 +2,9 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Middleware to parse incoming JSON payloads
+app.use(express.json());
+
 // This MUST match the Verify Token in your Meta Developer Dashboard
 const VERIFY_TOKEN = "prop247_secret_123";
 
@@ -23,7 +26,35 @@ app.get('/webhook', (req, res) => {
 });
 
 app.post('/webhook', (req, res) => {
-    console.log('Webhook payload received:', JSON.stringify(req.body, null, 2));
+    const body = req.body;
+
+    // Check if this is a WhatsApp message event
+    if (body.object === 'whatsapp_business_account') {
+        if (
+            body.entry &&
+            body.entry[0].changes &&
+            body.entry[0].changes[0].value.messages &&
+            body.entry[0].changes[0].value.messages[0]
+        ) {
+            // EXTRACT THE DATA
+            const message = body.entry[0].changes[0].value.messages[0];
+            const contact = body.entry[0].changes[0].value.contacts[0];
+
+            const fromNumber = message.from; // The lead's phone number
+            const leadName = contact.profile.name; // The lead's WhatsApp name
+            const messageText = message.text ? message.text.body : "[Not a text message]"; // The message body
+
+            // Log the clean data
+            console.log("====================================");
+            console.log("📥 NEW LEAD RECEIVED!");
+            console.log(`👤 Name: ${leadName}`);
+            console.log(`📱 Phone: ${fromNumber}`);
+            console.log(`💬 Message: ${messageText}`);
+            console.log("====================================");
+        }
+    }
+
+    // Always respond with 200 OK to Meta
     res.sendStatus(200);
 });
 
