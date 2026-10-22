@@ -26,7 +26,7 @@ app.get('/api/properties', async (req, res) => {
 });
 
 // ==========================================
-// NEW: AGENT DASHBOARD ROUTE
+// AGENT DASHBOARD ROUTE
 // ==========================================
 app.get('/dashboard', async (req, res) => {
     const { data: leads, error } = await supabase
@@ -34,19 +34,26 @@ app.get('/dashboard', async (req, res) => {
         .select('*')
         .order('created_at', { ascending: false });
 
-    if (error) {
-        return res.status(500).send("Error loading leads");
-    }
+    if (error) return res.status(500).send("Error loading leads");
 
-    let tableRows = leads.map(lead => `
+    let tableRows = leads.map(lead => {
+        // Determine status badge color
+        let statusColor = '#ccc';
+        if (lead.status === 'New') statusColor = '#ff9800'; // Orange
+        if (lead.status === 'Contacted') statusColor = '#2196f3'; // Blue
+        if (lead.status === 'Closed') statusColor = '#4caf50'; // Green
+
+        return `
         <tr>
             <td>${new Date(lead.created_at).toLocaleString()}</td>
             <td><strong>${lead.name || 'Unknown'}</strong></td>
             <td><a href="https://wa.me/${lead.phone}" target="_blank">${lead.phone}</a></td>
             <td>${lead.message}</td>
             <td>${lead.property_id ? `ID-${lead.property_id}` : 'N/A'}</td>
+            <td><span style="background:${statusColor}; color:white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${lead.status || 'New'}</span></td>
         </tr>
-    `).join('');
+        `;
+    }).join('');
 
     res.send(`
         <!DOCTYPE html>
@@ -75,6 +82,7 @@ app.get('/dashboard', async (req, res) => {
                         <th>Phone (Click to Reply)</th>
                         <th>Message</th>
                         <th>Property Ref</th>
+                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -85,6 +93,7 @@ app.get('/dashboard', async (req, res) => {
         </html>
     `);
 });
+// ==========================================
 // ==========================================
 
 app.get('/webhook', (req, res) => {
