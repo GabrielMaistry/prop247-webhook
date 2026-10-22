@@ -1,5 +1,5 @@
 const express = require('express');
-const axios = require('axios'); // We need this to send messages to Meta
+const axios = require('axios'); 
 const { createClient } = require('@supabase/supabase-js');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,7 +17,14 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 // ⚠️ REPLACE THESE WITH YOUR ACTUAL IDs
 const WHATSAPP_TOKEN = 'EAActpmZBw03kBSyHwZAX3sikBYrCItQbHYGhJ4t7AEX7yBHN7qPeFOSZCaPO9d2nne3uzn089LL86cubokBAFDJOgA7s2ILikGJM3FGYAQ5veBPW6fJJAPNyZC2nP6IupqTjhlnASvcUZCL5mBbUy70etEvM43vy0Y5mIZCxmAZCxXduOuqTwZBtKbsAG0mtiD9J7Nj3NsuV8HNbRMyN3ccoSn6hPdnkANZAejDcagvB2GPbRAJNgZC8yH1kW7OHL5CnQbV6N3zOfZB2dmRInNDVAZDZD'; 
 const PHONE_NUMBER_ID = '1472307879292652';
-const AGENT_PHONE_NUMBER = '27821234567'; // ⚠️ Put the Agent's real number here (country code, no +)
+const AGENT_PHONE_NUMBER = '27821234567'; // ⚠️ Put YOUR number here for testing
+
+// API route to get properties for the website
+app.get('/api/properties', async (req, res) => {
+    const { data, error } = await supabase.from('properties').select('*');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+});
 
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
@@ -49,12 +56,20 @@ app.post('/webhook', async (req, res) => {
 
             console.log(`📥 Received lead from ${leadName} (${fromNumber})`);
 
-            // 1. SAVE TO SUPABASE
-            const { error } = await supabase.from('leads').insert([{ name: leadName, phone: fromNumber, message: messageText }]);
+            // Extract Property ID if it exists in the message (e.g., "Ref: ID-2")
+            let propertyId = null;
+            const refMatch = messageText.match(/Ref:\s*ID-(\d+)/i);
+            if (refMatch) propertyId = refMatch[1];
+
+            // 1. SAVE TO SUPABASE (With Property ID)
+            const { error } = await supabase.from('leads').insert([
+                { name: leadName, phone: fromNumber, message: messageText, property_id: propertyId }
+            ]);
+            
             if (error) console.error("❌ Supabase Error:", error);
             else console.log("✅ Lead saved to DB!");
 
-            // 2. AUTO-REPLY TO THE BUYER (Like Page 6 of the PDF)
+            // 2. AUTO-REPLY TO THE BUYER
             try {
                 await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
                     messaging_product: "whatsapp",
@@ -68,9 +83,8 @@ app.post('/webhook', async (req, res) => {
                 console.error("❌ Failed to send auto-reply:", err.response?.data || err.message);
             }
 
-            // 3. NOTIFY THE AGENT (Like Page 7 of the PDF)
+            // 3. NOTIFY THE AGENT
             try {
-                // We use a wa.me link so the agent can just click it to reply
                 const agentLink = `https://wa.me/${fromNumber}?text=Hi%20${leadName},%20I%20am%20responding%20to%20your%20Prop247%20enquiry.`;
                 
                 await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
