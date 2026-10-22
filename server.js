@@ -14,7 +14,6 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // WhatsApp API Setup
-// ⚠️ REPLACE THESE WITH YOUR ACTUAL IDs
 const WHATSAPP_TOKEN = 'EAActpmZBw03kBSyHwZAX3sikBYrCItQbHYGhJ4t7AEX7yBHN7qPeFOSZCaPO9d2nne3uzn089LL86cubokBAFDJOgA7s2ILikGJM3FGYAQ5veBPW6fJJAPNyZC2nP6IupqTjhlnASvcUZCL5mBbUy70etEvM43vy0Y5mIZCxmAZCxXduOuqTwZBtKbsAG0mtiD9J7Nj3NsuV8HNbRMyN3ccoSn6hPdnkANZAejDcagvB2GPbRAJNgZC8yH1kW7OHL5CnQbV6N3zOfZB2dmRInNDVAZDZD'; 
 const PHONE_NUMBER_ID = '1472307879292652';
 const AGENT_PHONE_NUMBER = '27821234567'; // ⚠️ Put YOUR number here for testing
@@ -25,6 +24,68 @@ app.get('/api/properties', async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
 });
+
+// ==========================================
+// NEW: AGENT DASHBOARD ROUTE
+// ==========================================
+app.get('/dashboard', async (req, res) => {
+    const { data: leads, error } = await supabase
+        .from('leads')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        return res.status(500).send("Error loading leads");
+    }
+
+    let tableRows = leads.map(lead => `
+        <tr>
+            <td>${new Date(lead.created_at).toLocaleString()}</td>
+            <td><strong>${lead.name || 'Unknown'}</strong></td>
+            <td><a href="https://wa.me/${lead.phone}" target="_blank">${lead.phone}</a></td>
+            <td>${lead.message}</td>
+            <td>${lead.property_id ? `ID-${lead.property_id}` : 'N/A'}</td>
+        </tr>
+    `).join('');
+
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Prop247 Agent Dashboard</title>
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f4f6f8; margin: 0; }
+                h1 { color: #333; }
+                .stats { margin-bottom: 20px; font-size: 18px; }
+                table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+                th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+                th { background-color: #0057ff; color: white; }
+                tr:hover { background-color: #f1f1f1; }
+                a { color: #25D366; font-weight: bold; text-decoration: none; }
+            </style>
+        </head>
+        <body>
+            <h1>📥 Prop247 Lead Inbox</h1>
+            <div class="stats">Total Leads: <strong>${leads.length}</strong></div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Name</th>
+                        <th>Phone (Click to Reply)</th>
+                        <th>Message</th>
+                        <th>Property Ref</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${tableRows}
+                </tbody>
+            </table>
+        </body>
+        </html>
+    `);
+});
+// ==========================================
 
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
