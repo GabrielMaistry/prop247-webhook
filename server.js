@@ -14,6 +14,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // WhatsApp API Setup
+// ⚠️ REPLACE THIS WITH YOUR PERMANENT SYSTEM USER TOKEN
 const WHATSAPP_TOKEN = 'EAActpmZBw03kBS5Ktkb7TQd5n2DLHWEv3Oc8TSKN7lQZCUFZA3BLF4QZCiQul2BcIWcU0cQ0Wl2R2um9V7oJ5smGFZANZA6leZCmbZBWb71KeZBd4B7uHlXnIGYqq0I5HI9nSrRADpenSe5n0rIuTOz8gzcR30uZC4mwYyzvb4ZBjuO986nAnBYo0KvEiZCx9oXOdgZDZD'; 
 const PHONE_NUMBER_ID = '1472307879292652';
 const AGENT_PHONE_NUMBER = '27637662817'; // ⚠️ Put YOUR number here for testing
@@ -37,11 +38,10 @@ app.get('/dashboard', async (req, res) => {
     if (error) return res.status(500).send("Error loading leads");
 
     let tableRows = leads.map(lead => {
-        // Determine status badge color
         let statusColor = '#ccc';
-        if (lead.status === 'New') statusColor = '#ff9800'; // Orange
-        if (lead.status === 'Contacted') statusColor = '#2196f3'; // Blue
-        if (lead.status === 'Closed') statusColor = '#4caf50'; // Green
+        if (lead.status === 'New') statusColor = '#ff9800'; 
+        if (lead.status === 'Contacted') statusColor = '#2196f3'; 
+        if (lead.status === 'Closed') statusColor = '#4caf50'; 
 
         return `
         <tr>
@@ -93,8 +93,6 @@ app.get('/dashboard', async (req, res) => {
         </html>
     `);
 });
-// ==========================================
-// ==========================================
 
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
@@ -122,16 +120,44 @@ app.post('/webhook', async (req, res) => {
             const contact = body.entry[0].changes[0].value.contacts[0];
             const fromNumber = message.from;
             const leadName = contact.profile.name;
-            const messageText = message.text ? message.text.body : "[Media/Other]";
 
+            // ==========================================
+            // HANDLE BUTTON REPLIES (Pre-qualifying)
+            // ==========================================
+            if (message.type === 'button') {
+                const buttonPayload = message.button.payload; 
+                console.log(`🔘 Buyer clicked: ${buttonPayload}`);
+                
+                // Update the lead in the database with their answer
+                const answer = buttonPayload === 'financing_cash' ? 'Cash Buyer' : 'Needs Financing';
+                await supabase.from('leads').update({ message: `Pre-qualified: ${answer}` }).eq('phone', fromNumber);
+                
+                try {
+                    await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
+                        messaging_product: "whatsapp",
+                        to: fromNumber,
+                        text: { body: `Thanks for letting us know! An agent will be in touch shortly to assist you further.` }
+                    }, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } });
+                    console.log("✅ Confirmation sent to buyer!");
+                } catch (err) {
+                    console.error("❌ Failed to send confirmation:", err.response?.data || err.message);
+                }
+                
+                return res.sendStatus(200); // Stop processing further
+            }
+
+            // ==========================================
+            // HANDLE STANDARD TEXT MESSAGES
+            // ==========================================
+            const messageText = message.text ? message.text.body : "[Media/Other]";
             console.log(`📥 Received lead from ${leadName} (${fromNumber})`);
 
-            // Extract Property ID if it exists in the message (e.g., "Ref: ID-2")
+            // Extract Property ID if it exists in the message
             let propertyId = null;
             const refMatch = messageText.match(/Ref:\s*ID-(\d+)/i);
             if (refMatch) propertyId = refMatch[1];
 
-            // 1. SAVE TO SUPABASE (With Property ID)
+            // 1. SAVE TO SUPABASE
             const { error } = await supabase.from('leads').insert([
                 { name: leadName, phone: fromNumber, message: messageText, property_id: propertyId }
             ]);
@@ -139,18 +165,28 @@ app.post('/webhook', async (req, res) => {
             if (error) console.error("❌ Supabase Error:", error);
             else console.log("✅ Lead saved to DB!");
 
-            // 2. AUTO-REPLY TO THE BUYER
+            // 2. AUTO-REPLY WITH INTERACTIVE BUTTONS (Pre-qualifying)
             try {
                 await axios.post(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
                     messaging_product: "whatsapp",
                     to: fromNumber,
-                    text: { body: `Hi ${leadName}, this is Prop247. Thanks for your enquiry. One of our agents will be in contact with you shortly on WhatsApp.` }
+                    type: "interactive",
+                    interactive: {
+                        type: "button",
+                        body: { text: `Hi ${leadName}, thanks for your enquiry. To help us assist you better, please answer this quick question:` },
+                        action: {
+                            buttons: [
+                                { type: "reply", reply: { id: "financing_yes", title: "Financing" } },
+                                { type: "reply", reply: { id: "financing_cash", title: "Cash" } }
+                            ]
+                        }
+                    }
                 }, {
                     headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
                 });
-                console.log("✅ Auto-reply sent to buyer!");
+                console.log("✅ Pre-qualifying buttons sent to buyer!");
             } catch (err) {
-                console.error("❌ Failed to send auto-reply:", err.response?.data || err.message);
+                console.error("❌ Failed to send buttons:", err.response?.data || err.message);
             }
 
             // 3. NOTIFY THE AGENT
