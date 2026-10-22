@@ -62,5 +62,5 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`Webhook server listening on port ${PORT}`);
 });
 
-const SUPABASE_URL= 'https://byzuikkzzehjxpgnsddz.supabase.co' ;
-const SUPABASE_KEY= 'sb_publishable_Unp2ba5pU-mJ1yJHR02IkA_XrDjIygW' ;
+const SUPABASE_URL = 'https://byzuikkzzehjxpgnsddz.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_Unp2ba5pU-mJ1yJHR02IkA_XrDjIygW';
